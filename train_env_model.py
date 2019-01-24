@@ -26,9 +26,9 @@ import tensorflow as tf
 import numpy as np
 import os
 import sys
-import time
 from tensorflow.python.data import Dataset
 import utils
+import argparse
 
 
 def conv_stack(X, k1, c1, k2, c2, k3, c3):
@@ -273,7 +273,7 @@ def create_dataset(filelist, path, buffer_size=25, batch_size=10):
     ds = ds.batch(batch_size)
     return ds
     
-if __name__ == '__main__':
+def main(args):
 
     res_name = utils.gettime()
     res_dir = os.path.join('/home/david/git/rl_ssms/results/', res_name)
@@ -284,32 +284,29 @@ if __name__ == '__main__':
     # Store some git revision info in a text file in the log directory
     src_path,_ = os.path.split(os.path.realpath(__file__))
     utils.store_revision_info(src_path, res_dir, ' '.join(sys.argv))
+    
+    learning_rate_schedule = utils.copy_learning_rate_schedule_file(args.learning_rate_schedule, res_dir)
 
 
     with tf.Session() as sess:
       
-        seed = 42
-        batch_size = 16
-        length = 10
-        max_nrof_steps = 15000
-        
-        tf.set_random_seed(seed)
-        np.random.seed(seed)
+        tf.set_random_seed(args.seed)
+        np.random.seed(args.seed)
       
         filelist = [ 'bouncing_balls_training_data_%03d.pkl' % i for i in range(20) ]
-        dataset = create_dataset(filelist, 'data', buffer_size=20000, batch_size=batch_size)
+        dataset = create_dataset(filelist, 'data', buffer_size=20000, batch_size=args.batch_size)
 
         # Create an iterator over the dataset
         iterator = dataset.make_one_shot_iterator()
         obs, action = iterator.get_next()
         
         
-        is_pdt_ph = tf.placeholder(tf.bool, [None, length])
-        is_pdt = np.ones((batch_size, length), np.bool)
+        is_pdt_ph = tf.placeholder(tf.bool, [None, args.seq_length])
+        is_pdt = np.ones((args.batch_size, args.seq_length), np.bool)
         is_pdt[:,0::4] = False
       
         with tf.variable_scope('env_model'):
-            env_model = EnvModel(is_pdt_ph, obs, action, 1, length)
+            env_model = EnvModel(is_pdt_ph, obs, action, 1, args.seq_length)
 
         reg_loss = tf.reduce_mean(env_model.regularization_loss)
         rec_loss = tf.reduce_mean(env_model.reconstruction_loss)
@@ -323,16 +320,19 @@ if __name__ == '__main__':
 
         sess.run(tf.global_variables_initializer())
         
-        loss_log = np.zeros((max_nrof_steps,), np.float32)
-        rec_loss_log = np.zeros((max_nrof_steps,), np.float32)
-        reg_loss_log = np.zeros((max_nrof_steps,), np.float32)
+        loss_log = np.zeros((args.max_nrof_steps,), np.float32)
+        rec_loss_log = np.zeros((args.max_nrof_steps,), np.float32)
+        reg_loss_log = np.zeros((args.max_nrof_steps,), np.float32)
 
         try:
             print('Started training')
             rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0)
-            t = time.time()
-            for i in range(max_nrof_steps):
-                lr = 0.001
+            lr = None
+            for i in range(args.max_nrof_steps):
+                if i % 100 == 0:
+                    lr = utils.get_learning_rate_from_file(learning_rate_schedule, i)
+                    if lr < 0:
+                        break
                 _, rec_loss_, reg_loss_, loss_ = sess.run([train_op, rec_loss, reg_loss, loss], feed_dict={is_pdt_ph: is_pdt, learning_rate_ph:lr})
                 loss_log[i], rec_loss_log[i], reg_loss_log[i] = loss_, rec_loss_, reg_loss_
                 rec_loss_tot += rec_loss_
@@ -341,7 +341,6 @@ if __name__ == '__main__':
                 if i % 10 == 0:
                     print('step: %-5d  lr: %-12.6f  rec_loss: %-12.1f  reg_loss: %-12.1f  loss: %-12.1f' % (i, lr, rec_loss_tot/10, reg_loss_tot/10, loss_tot/10))
                     rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0) 
-                    t = time.time()
                 if i % 5000 == 0 and i>0:
                     saver.save(sess, model_filename, i)
                 if i % 100 == 0 and i>0:
@@ -356,4 +355,25 @@ if __name__ == '__main__':
 
         print('Done!')
         
+        
+def parse_arguments(argv):
+    parser = argparse.ArgumentParser()
+    
+    parser.add_argument('--max_nrof_steps', type=int,
+        help='Number of steps to train for.', default=20000)
+    parser.add_argument('--batch_size', type=int,
+        help='The number of sequences to process in one batch.', default=16)
+    parser.add_argument('--seed', type=int,
+        help='Random seed.', default=42)
+    parser.add_argument('--learning_rate_schedule', type=str,
+        help='File containing the learning rate schedule.', default='learning_rate_schedule_bouncing_balls.txt')
+    parser.add_argument('--seq_length', type=int,
+        help='The length of each sequence (excluding warm-up).', default=10)
+
+    return parser.parse_args(argv)
+  
+
+if __name__ == '__main__':
+    main(parse_arguments(sys.argv[1:]))
+
         

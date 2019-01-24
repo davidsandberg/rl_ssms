@@ -26,7 +26,7 @@ import os
 import datetime
 from subprocess import Popen, PIPE
 import pickle
-
+import shutil
 def gettime():
     return datetime.datetime.strftime(datetime.datetime.now(), '%Y%m%d-%H%M%S')
 
@@ -66,6 +66,11 @@ def get_learning_rate_from_file(filename, step):
                     learning_rate = lr
                 else:
                     return learning_rate
+                  
+def copy_learning_rate_schedule_file(filename, target_dir):
+    shutil.copy(filename, target_dir)
+    new_path = os.path.join(target_dir, os.path.split(filename)[1])
+    return new_path
                   
 def load_pickle(filename):
     with open(filename, 'rb') as f:
