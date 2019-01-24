@@ -1,4 +1,4 @@
-# State Space Models for Reinforcement Learning in Tensorflow
+# Deep State Space Models for Reinforcement Learning in Tensorflow
 
 ## Work in progress!!!
 

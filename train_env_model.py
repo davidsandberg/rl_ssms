@@ -1,10 +1,34 @@
+"""Train an environment model
+"""
+# MIT License
+# 
+# Copyright (c) 2019 David Sandberg
+# 
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# 
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+# 
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
 import tensorflow as tf
 import numpy as np
-import pickle
 import os
+import sys
 import time
-import datetime
 from tensorflow.python.data import Dataset
+import utils
 
 
 def conv_stack(X, k1, c1, k2, c2, k3, c3):
@@ -25,7 +49,7 @@ def res_conv(X, use_extra_convolution=True):
     """
     if use_extra_convolution:
         c = tf.contrib.layers.conv2d(X, num_outputs=64, kernel_size=1,
-                stride=1, padding='same', activation_fn=None)  #  shape=(?, 10, 10, 64)
+                stride=1, padding='same', activation_fn=None)
     else:
         c = X
     rc1_relu = tf.contrib.layers.conv2d(c, num_outputs=32, kernel_size=3,
@@ -56,8 +80,8 @@ def state_transition_module(a, s, z):
             c = tf.concat([a, s], axis=-1)
         else:
             c = tf.concat([a, s, z], axis=-1)
-        rc1_relu = tf.nn.relu(res_conv(c))  #  shape=(?, 10, 10, 64)
-        pi = pool_inject(rc1_relu)  #  shape=(?, 10, 10, 64)
+        rc1_relu = tf.nn.relu(res_conv(c))
+        pi = pool_inject(rc1_relu)
         s_next = res_conv(pi)
     return s_next
 
@@ -142,7 +166,6 @@ def kl_divergence_gaussians2(p_mu, p_sigma_log, q_mu, q_sigma_log):
 
 def kl_div_bernoulli(p, q):
     eps = 1e-6
-    #kl = tf.reduce_sum(p*tf.log((p+eps)/(q+eps)) + (1-p)*tf.log((1-p+eps)/(1-q+eps)+eps), axis=[2,3,4])
     pc = tf.clip_by_value(p, eps, 1-eps)
     qc = tf.clip_by_value(q, eps, 1-eps)
     kl = tf.reduce_sum(pc*tf.log(pc/qc) + (1-pc)*tf.log((1-pc)/(1-qc)), axis=[2,3,4])
@@ -154,11 +177,6 @@ def get_onehot_actions(actions, nrof_actions, state_shape):
     qq = tf.one_hot(tf.reshape(actions, [-1, length, 1, 1]), nrof_actions, axis=-1)
     onehot_actions = tf.tile(qq, multiples=(1, 1, height, width, 1))
     return onehot_actions
-  
-def softmax(x, axis):
-    z = x - tf.reduce_max(x, axis, keepdims=True)
-    y = tf.exp(z) / tf.reduce_sum(tf.exp(z), axis, keepdims=True)
-    return y
   
 class EnvModel():
     
@@ -222,7 +240,6 @@ class EnvModel():
             obs_hat = observation_decoder(next_state, z)
             obs_hat_list += [ obs_hat ]
             
-            
             state = next_state
             
         # Stack lists of tensors
@@ -244,7 +261,7 @@ class EnvModel():
 def create_dataset(filelist, path, buffer_size=25, batch_size=10):
     def gen(filelist, path):
         for fn in filelist:
-            data = np.float32(load_pickle(os.path.join(path, fn)))
+            data = np.float32(utils.load_pickle(os.path.join(path, fn)))
             data = np.expand_dims(data, 4)
             data = np.repeat(data, 3, axis=4)
             for i in range(data.shape[0]):
@@ -256,31 +273,28 @@ def create_dataset(filelist, path, buffer_size=25, batch_size=10):
     ds = ds.batch(batch_size)
     return ds
     
-def load_pickle(filename):
-    with open(filename, 'rb') as f:
-        arr = pickle.load(f)
-    return arr
-  
-def save_pickle(filename, var_list):
-    with open(filename, 'wb') as f:
-        pickle.dump(var_list, f)
-
-def gettime():
-    return datetime.datetime.strftime(datetime.datetime.now(), '%Y%m%d-%H%M%S')
-
 if __name__ == '__main__':
-  
-    res_name = gettime()
-    res_dir = os.path.join('/home/david/git/imagination-augmented-agents-tf/results/', res_name) 
+
+    res_name = utils.gettime()
+    res_dir = os.path.join('/home/david/git/rl_ssms/results/', res_name)
     os.makedirs(res_dir, exist_ok=True)
     log_filename = os.path.join(res_dir, 'log.pkl')
     model_filename = os.path.join(res_dir, res_name)
+    
+    # Store some git revision info in a text file in the log directory
+    src_path,_ = os.path.split(os.path.realpath(__file__))
+    utils.store_revision_info(src_path, res_dir, ' '.join(sys.argv))
+
 
     with tf.Session() as sess:
       
+        seed = 42
         batch_size = 16
         length = 10
-        max_nrof_steps = 10000
+        max_nrof_steps = 15000
+        
+        tf.set_random_seed(seed)
+        np.random.seed(seed)
       
         filelist = [ 'bouncing_balls_training_data_%03d.pkl' % i for i in range(20) ]
         dataset = create_dataset(filelist, 'data', buffer_size=20000, batch_size=batch_size)
@@ -302,7 +316,8 @@ if __name__ == '__main__':
         loss = reg_loss + rec_loss
 
         global_step = tf.Variable(0, name='global_step', trainable=False)
-        train_op = tf.train.AdamOptimizer().minimize(loss, global_step=global_step)
+        learning_rate_ph = tf.placeholder(tf.float32, ())
+        train_op = tf.train.AdamOptimizer(learning_rate_ph).minimize(loss, global_step=global_step)
 
         saver = tf.train.Saver()
 
@@ -316,20 +331,21 @@ if __name__ == '__main__':
             print('Started training')
             rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0)
             t = time.time()
-            for i in range(max_nrof_steps+1):
-                _, rec_loss_, reg_loss_, loss_ = sess.run([train_op, rec_loss, reg_loss, loss], feed_dict={is_pdt_ph: is_pdt})
+            for i in range(max_nrof_steps):
+                lr = 0.001
+                _, rec_loss_, reg_loss_, loss_ = sess.run([train_op, rec_loss, reg_loss, loss], feed_dict={is_pdt_ph: is_pdt, learning_rate_ph:lr})
                 loss_log[i], rec_loss_log[i], reg_loss_log[i] = loss_, rec_loss_, reg_loss_
                 rec_loss_tot += rec_loss_
                 reg_loss_tot += reg_loss_
                 loss_tot += loss_
                 if i % 10 == 0:
-                    print('step: %-5d  rec_loss: %-12.1f reg_loss: %-12.1f loss: %-12.1f' % (i, rec_loss_tot/10, reg_loss_tot/10, loss_tot/10))
+                    print('step: %-5d  lr: %-12.6f  rec_loss: %-12.1f  reg_loss: %-12.1f  loss: %-12.1f' % (i, lr, rec_loss_tot/10, reg_loss_tot/10, loss_tot/10))
                     rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0) 
                     t = time.time()
                 if i % 5000 == 0 and i>0:
                     saver.save(sess, model_filename, i)
                 if i % 100 == 0 and i>0:
-                    save_pickle(log_filename, [loss_log, rec_loss_log, reg_loss_log])
+                    utils.save_pickle(log_filename, [loss_log, rec_loss_log, reg_loss_log])
 
                 
         except tf.errors.OutOfRangeError:
