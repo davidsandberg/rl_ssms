@@ -180,7 +180,7 @@ def get_onehot_actions(actions, nrof_actions, state_shape):
   
 class EnvModel():
     
-    def __init__(self, is_pdt, obs, actions, nrof_actions=None, nrof_time_steps=None):
+    def __init__(self, is_pdt, obs, actions, nrof_actions=None, nrof_time_steps=None, nrof_free_nats=0.0):
         _, length, width, height, depth = obs.get_shape().as_list()
         nrof_init_time_steps = 3
     
@@ -252,8 +252,7 @@ class EnvModel():
         self.obs_hat = tf.nn.sigmoid(tf.stack(obs_hat_list, axis=1))
 
         # Calculate loss
-        lmbd = 0.05  # nats per dimension
-        f = lmbd * np.prod(self.mu.get_shape().as_list()[2:])
+        f = nrof_free_nats * np.prod(self.mu.get_shape().as_list()[2:])
         print('Reg loss limit: %.3f' % f)
         self.regularization_loss = tf.maximum(tf.constant(f, tf.float32), kl_divergence_gaussians(self.mu, self.sigma, self.mu_hat, self.sigma_hat))
         self.reconstruction_loss = kl_div_bernoulli(self.obs[:,nrof_init_time_steps:,:,:,:], self.obs_hat)
@@ -306,7 +305,7 @@ def main(args):
         is_pdt[:,0::4] = False
       
         with tf.variable_scope('env_model'):
-            env_model = EnvModel(is_pdt_ph, obs, action, 1, args.seq_length)
+            env_model = EnvModel(is_pdt_ph, obs, action, 1, args.seq_length, args.nrof_free_nats)
 
         reg_loss = tf.reduce_mean(env_model.regularization_loss)
         rec_loss = tf.reduce_mean(env_model.reconstruction_loss)
@@ -369,6 +368,8 @@ def parse_arguments(argv):
         help='File containing the learning rate schedule.', default='learning_rate_schedule_bouncing_balls.txt')
     parser.add_argument('--seq_length', type=int,
         help='The length of each sequence (excluding warm-up).', default=10)
+    parser.add_argument('--nrof_free_nats', type=float,
+        help='The number of free nats per dimension.', default=0.05)
 
     return parser.parse_args(argv)
   
