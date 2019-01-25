@@ -95,6 +95,9 @@ def observation_encoder(o):
         cs2 = conv_stack(std2, 3, 32, 5, 32, 3, 64)
         e = tf.nn.relu(cs2)
     return e
+  
+def softclip(x, limit=0.1):
+    return tf.nn.softplus(x-limit)+limit
 
 def prior_module(s, a):
     """
@@ -102,7 +105,7 @@ def prior_module(s, a):
     with tf.variable_scope('prior_module'):
         c = tf.concat([s, a], axis=-1)
         mu = conv_stack(c, 1, 32, 3, 32, 3, 64)
-        sigma = tf.nn.softplus(conv_stack(c, 1, 32, 3, 32, 3, 64))
+        sigma = softclip(conv_stack(c, 1, 32, 3, 32, 3, 64))
     return mu, sigma
 
 def posterior_module(mu, sigma, s, e, a):
@@ -111,7 +114,7 @@ def posterior_module(mu, sigma, s, e, a):
     with tf.variable_scope('posterior_module'):
         c = tf.concat([mu, sigma, s, e, a], axis=-1)
         mu_hat = conv_stack(c, 1, 32, 3, 32, 3, 64)
-        sigma_hat = tf.nn.softplus(conv_stack(c, 1, 32, 3, 32, 3, 64))
+        sigma_hat = softclip(conv_stack(c, 1, 32, 3, 32, 3, 64))
     return mu_hat, sigma_hat
 
 def initial_state_module(ex):
@@ -138,33 +141,16 @@ def observation_decoder(s, z):
         dts2 = tf.nn.depth_to_space(cs2, 4)
     return dts2
 
-def kl_div_gauss(action_dist1, action_dist2, action_size):
+def kl_divergence_gaussians(q_mu, q_sigma, p_mu, p_sigma):
     # https://github.com/openai/baselines/blob/f2729693253c0ef4d4086231d36e0a4307ec1cb3/baselines/acktr/utils.py
-    mean1, std1 = action_dist1[:, :action_size], action_dist1[:, action_size:]
-    mean2, std2 = action_dist2[:, :action_size], action_dist2[:, action_size:]
-
-    numerator = tf.square(mean1 - mean2) + tf.square(std1) - tf.square(std2)
-    denominator = 2 * tf.square(std2) + 1e-8
-    return tf.reduce_sum(
-        numerator/denominator + tf.log(std2) - tf.log(std1),reduction_indices=-1)
+    q_sigma += 1e-1
+    p_sigma += 1e-1
+    num = tf.square(q_mu - p_mu) + tf.square(q_sigma) - tf.square(p_sigma)
+    den = 2 * tf.square(p_sigma) + 1e-8
+    kl = tf.reduce_sum(num/den + tf.log(p_sigma) - tf.log(q_sigma), axis=[2,3,4])
+    return kl
   
-def kl_divergence_gaussians(p_mu, p_sigma, q_mu, q_sigma):
-    eps = 1e-1
-    zz = tf.distributions.kl_divergence(
-    tf.distributions.Normal(loc=q_mu, scale=q_sigma+eps),
-    tf.distributions.Normal(loc=p_mu, scale=p_sigma+eps))
-    return tf.reduce_sum(zz, axis=[2,3,4])
-  
-def kl_divergence_gaussians2(p_mu, p_sigma_log, q_mu, q_sigma_log):
-    #https://hk.saowen.com/a/7404b78cd5b980e16e08423192e35ec18ecb3cb243d310a9d9a194747d9ee1ba
-    eps = 1e-3
-    r = q_mu - p_mu
-    p_sigma, q_sigma = tf.exp(p_sigma_log), tf.exp(q_sigma_log)
-    #zz = tf.log(p_sigma) - tf.log(q_sigma) - .5 * (1. - (q_sigma**2 + r**2) / (p_sigma**2+eps))
-    zz = p_sigma_log - q_sigma_log - .5 * (1. - (q_sigma**2 + r**2) / (p_sigma**2+eps))
-    return tf.reduce_sum(zz, axis=[2,3,4])
-
-def kl_div_bernoulli(p, q):
+def kl_divergence_bernoulli(p, q):
     eps = 1e-6
     pc = tf.clip_by_value(p, eps, 1-eps)
     qc = tf.clip_by_value(q, eps, 1-eps)
@@ -174,8 +160,8 @@ def kl_div_bernoulli(p, q):
 def get_onehot_actions(actions, nrof_actions, state_shape):
     length = actions.get_shape()[1]
     _, height, width, _ = state_shape
-    qq = tf.one_hot(tf.reshape(actions, [-1, length, 1, 1]), nrof_actions, axis=-1)
-    onehot_actions = tf.tile(qq, multiples=(1, 1, height, width, 1))
+    oh = tf.one_hot(tf.reshape(actions, [-1, length, 1, 1]), nrof_actions, axis=-1)
+    onehot_actions = tf.tile(oh, multiples=(1, 1, height, width, 1))
     return onehot_actions
   
 class EnvModel():
@@ -254,7 +240,7 @@ class EnvModel():
         f = nrof_free_nats * np.prod(self.mu.get_shape().as_list()[2:])
         print('Reg loss limit: %.3f' % f)
         self.regularization_loss = tf.maximum(tf.constant(f, tf.float32), kl_divergence_gaussians(self.mu, self.sigma, self.mu_hat, self.sigma_hat))
-        self.reconstruction_loss = kl_div_bernoulli(self.obs[:,nrof_init_time_steps:,:,:,:], self.obs_hat)
+        self.reconstruction_loss = kl_divergence_bernoulli(self.obs[:,nrof_init_time_steps:,:,:,:], self.obs_hat)
         
 def create_dataset(filelist, path, buffer_size=25, batch_size=10):
     def gen(filelist, path):
