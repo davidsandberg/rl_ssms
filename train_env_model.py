@@ -180,9 +180,8 @@ def get_onehot_actions(actions, nrof_actions, state_shape):
   
 class EnvModel():
     
-    def __init__(self, is_pdt, obs, actions, nrof_actions=None, nrof_time_steps=None, nrof_free_nats=0.0):
+    def __init__(self, is_pdt, obs, actions, nrof_actions=None, nrof_init_time_steps=3, nrof_time_steps=None, nrof_free_nats=0.0):
         _, length, width, height, depth = obs.get_shape().as_list()
-        nrof_init_time_steps = 3
     
         self.obs = obs
         self.actions = actions
@@ -276,6 +275,8 @@ def create_transition_type_matrix(batch_size, seq_length, training_scheme='75%PD
     is_pdt = np.ones((batch_size, seq_length), np.bool)
     if training_scheme=='75%PDT':
         is_pdt[:,0::4] = False
+    else:
+        raise ValueError('Invalid training scheme "%s".' % training_scheme)
     return is_pdt
     
 def main(args):
@@ -311,9 +312,9 @@ def main(args):
         
         is_pdt_ph = tf.placeholder(tf.bool, [None, args.seq_length])
         is_pdt = create_transition_type_matrix(args.batch_size, args.seq_length)
-      
+
         with tf.variable_scope('env_model'):
-            env_model = EnvModel(is_pdt_ph, obs, action, 1, args.seq_length, args.nrof_free_nats)
+            env_model = EnvModel(is_pdt_ph, obs, action, 1, nrof_time_steps=args.seq_length, nrof_free_nats=args.nrof_free_nats)
 
         reg_loss = tf.reduce_mean(env_model.regularization_loss)
         rec_loss = tf.reduce_mean(env_model.reconstruction_loss)
@@ -327,21 +328,21 @@ def main(args):
 
         sess.run(tf.global_variables_initializer())
         
-        loss_log = np.zeros((args.max_nrof_steps+1,), np.float32)
-        rec_loss_log = np.zeros((args.max_nrof_steps+1,), np.float32)
-        reg_loss_log = np.zeros((args.max_nrof_steps+1,), np.float32)
+        loss_log = np.zeros((args.max_nrof_steps,), np.float32)
+        rec_loss_log = np.zeros((args.max_nrof_steps,), np.float32)
+        reg_loss_log = np.zeros((args.max_nrof_steps,), np.float32)
 
         try:
             print('Started training')
             rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0)
             lr = None
-            for i in range(args.max_nrof_steps+1):
-                if i % 100 == 0:
+            for i in range(1, args.max_nrof_steps+1):
+                if not lr or i % 100 == 0:
                     lr = utils.get_learning_rate_from_file(learning_rate_schedule, i)
                     if lr < 0:
                         break
                 _, rec_loss_, reg_loss_, loss_ = sess.run([train_op, rec_loss, reg_loss, loss], feed_dict={is_pdt_ph: is_pdt, learning_rate_ph:lr})
-                loss_log[i], rec_loss_log[i], reg_loss_log[i] = loss_, rec_loss_, reg_loss_
+                loss_log[i-1], rec_loss_log[i-1], reg_loss_log[i-1] = loss_, rec_loss_, reg_loss_
                 rec_loss_tot += rec_loss_
                 reg_loss_tot += reg_loss_
                 loss_tot += loss_
@@ -350,7 +351,7 @@ def main(args):
                     rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0)
                 if i % 5000 == 0 and i>0:
                     saver.save(sess, model_filename, i)
-                if i % 100 == 0 and i>0:
+                if i % 100 == 0:
                     utils.save_pickle(log_filename, [loss_log, rec_loss_log, reg_loss_log])
 
                 
