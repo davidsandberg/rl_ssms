@@ -143,8 +143,6 @@ def observation_decoder(s, z):
 
 def kl_divergence_gaussians(q_mu, q_sigma, p_mu, p_sigma):
     # https://github.com/openai/baselines/blob/f2729693253c0ef4d4086231d36e0a4307ec1cb3/baselines/acktr/utils.py
-    q_sigma += 1e-1
-    p_sigma += 1e-1
     num = tf.square(q_mu - p_mu) + tf.square(q_sigma) - tf.square(p_sigma)
     den = 2 * tf.square(p_sigma) + 1e-8
     kl = tf.reduce_sum(num/den + tf.log(p_sigma) - tf.log(q_sigma), axis=[2,3,4])
