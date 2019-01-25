@@ -271,19 +271,29 @@ def create_dataset(filelist, path, buffer_size=25, batch_size=10):
     ds = ds.prefetch(buffer_size)
     ds = ds.batch(batch_size)
     return ds
+  
+def create_transition_type_matrix(batch_size, seq_length, training_scheme='75%PDT'):
+    is_pdt = np.ones((batch_size, seq_length), np.bool)
+    if training_scheme=='75%PDT':
+        is_pdt[:,0::4] = False
+    return is_pdt
     
 def main(args):
 
+    src_path,_ = os.path.split(os.path.realpath(__file__))
+    
+    # Create result directory
     res_name = utils.gettime()
-    res_dir = os.path.join('/home/david/git/rl_ssms/results/', res_name)
+    res_dir = os.path.join(src_path, 'results', res_name)
     os.makedirs(res_dir, exist_ok=True)
+    
     log_filename = os.path.join(res_dir, 'log.pkl')
     model_filename = os.path.join(res_dir, res_name)
     
     # Store some git revision info in a text file in the log directory
-    src_path,_ = os.path.split(os.path.realpath(__file__))
     utils.store_revision_info(src_path, res_dir, ' '.join(sys.argv))
-    
+
+    # Copy learning rate schedule file to result directory
     learning_rate_schedule = utils.copy_learning_rate_schedule_file(args.learning_rate_schedule, res_dir)
 
 
@@ -299,10 +309,8 @@ def main(args):
         iterator = dataset.make_one_shot_iterator()
         obs, action = iterator.get_next()
         
-        
         is_pdt_ph = tf.placeholder(tf.bool, [None, args.seq_length])
-        is_pdt = np.ones((args.batch_size, args.seq_length), np.bool)
-        is_pdt[:,0::4] = False
+        is_pdt = create_transition_type_matrix(args.batch_size, args.seq_length)
       
         with tf.variable_scope('env_model'):
             env_model = EnvModel(is_pdt_ph, obs, action, 1, args.seq_length, args.nrof_free_nats)
@@ -319,15 +327,15 @@ def main(args):
 
         sess.run(tf.global_variables_initializer())
         
-        loss_log = np.zeros((args.max_nrof_steps,), np.float32)
-        rec_loss_log = np.zeros((args.max_nrof_steps,), np.float32)
-        reg_loss_log = np.zeros((args.max_nrof_steps,), np.float32)
+        loss_log = np.zeros((args.max_nrof_steps+1,), np.float32)
+        rec_loss_log = np.zeros((args.max_nrof_steps+1,), np.float32)
+        reg_loss_log = np.zeros((args.max_nrof_steps+1,), np.float32)
 
         try:
             print('Started training')
             rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0)
             lr = None
-            for i in range(args.max_nrof_steps):
+            for i in range(args.max_nrof_steps+1):
                 if i % 100 == 0:
                     lr = utils.get_learning_rate_from_file(learning_rate_schedule, i)
                     if lr < 0:
@@ -339,7 +347,7 @@ def main(args):
                 loss_tot += loss_
                 if i % 10 == 0:
                     print('step: %-5d  lr: %-12.6f  rec_loss: %-12.1f  reg_loss: %-12.1f  loss: %-12.1f' % (i, lr, rec_loss_tot/10, reg_loss_tot/10, loss_tot/10))
-                    rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0) 
+                    rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0)
                 if i % 5000 == 0 and i>0:
                     saver.save(sess, model_filename, i)
                 if i % 100 == 0 and i>0:
