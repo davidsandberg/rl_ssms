@@ -272,11 +272,13 @@ def main(args):
     res_dir = os.path.join(src_path, 'results', res_name)
     os.makedirs(res_dir, exist_ok=True)
     
-    log_filename = os.path.join(res_dir, 'log.pkl')
+    log_filename = os.path.join(res_dir, 'log.h5')
     model_filename = os.path.join(res_dir, res_name)
     
     # Store some git revision info in a text file in the log directory
     utils.store_revision_info(src_path, res_dir, ' '.join(sys.argv))
+    
+    utils.store_hdf(os.path.join(res_dir, 'parameters.h5'), vars(args))
 
     # Copy learning rate schedule file to result directory
     learning_rate_schedule = utils.copy_learning_rate_schedule_file(args.learning_rate_schedule, res_dir)
@@ -312,9 +314,13 @@ def main(args):
 
         sess.run(tf.global_variables_initializer())
         
-        loss_log = np.zeros((args.max_nrof_steps,), np.float32)
-        rec_loss_log = np.zeros((args.max_nrof_steps,), np.float32)
-        reg_loss_log = np.zeros((args.max_nrof_steps,), np.float32)
+        stat = {
+            'loss': np.zeros((args.max_nrof_steps,), np.float32),
+            'rec_loss': np.zeros((args.max_nrof_steps,), np.float32),
+            'reg_loss': np.zeros((args.max_nrof_steps,), np.float32),
+            'learning_rate': np.zeros((args.max_nrof_steps,), np.float32),
+            }
+
 
         try:
             print('Started training')
@@ -325,8 +331,9 @@ def main(args):
                     lr = utils.get_learning_rate_from_file(learning_rate_schedule, i)
                     if lr < 0:
                         break
+                stat['learning_rate'][i-1] = lr
                 _, rec_loss_, reg_loss_, loss_ = sess.run([train_op, rec_loss, reg_loss, loss], feed_dict={is_pdt_ph: is_pdt, learning_rate_ph:lr})
-                loss_log[i-1], rec_loss_log[i-1], reg_loss_log[i-1] = loss_, rec_loss_, reg_loss_
+                stat['loss'][i-1], stat['rec_loss'][i-1], stat['reg_loss'][i-1] = loss_, rec_loss_, reg_loss_
                 rec_loss_tot += rec_loss_
                 reg_loss_tot += reg_loss_
                 loss_tot += loss_
@@ -336,7 +343,7 @@ def main(args):
                 if i % 5000 == 0 and i>0:
                     saver.save(sess, model_filename, i)
                 if i % 100 == 0:
-                    utils.save_pickle(log_filename, [loss_log, rec_loss_log, reg_loss_log])
+                    utils.store_hdf(log_filename, stat)
 
                 
         except tf.errors.OutOfRangeError:

@@ -27,6 +27,8 @@ import datetime
 from subprocess import Popen, PIPE
 import pickle
 import shutil
+import h5py
+
 def gettime():
     return datetime.datetime.strftime(datetime.datetime.now(), '%Y%m%d-%H%M%S')
 
@@ -80,5 +82,9 @@ def load_pickle(filename):
 def save_pickle(filename, var_list):
     with open(filename, 'wb') as f:
         pickle.dump(var_list, f)
-
+        
+def store_hdf(filename, stat):
+    with h5py.File(filename, 'w') as f:
+        for key, value in stat.items():
+            f.create_dataset(key, data=value)
 
