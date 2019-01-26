@@ -26,6 +26,7 @@ import tensorflow as tf
 import numpy as np
 import os
 import sys
+import time
 from tensorflow.python.data import Dataset
 import utils
 import argparse
@@ -289,8 +290,9 @@ def main(args):
         tf.set_random_seed(args.seed)
         np.random.seed(args.seed)
       
-        filelist = [ 'bouncing_balls_training_data_%03d.pkl' % i for i in range(20) ]
-        dataset = create_dataset(filelist, 'data', buffer_size=20000, batch_size=args.batch_size)
+        data_dir = os.path.join('data', 'bouncing_balls_ds0p1')
+        filelist = [ 'train_%03d.pkl' % i for i in range(200) ]
+        dataset = create_dataset(filelist, data_dir, buffer_size=20000, batch_size=args.batch_size)
 
         # Create an iterator over the dataset
         iterator = dataset.make_one_shot_iterator()
@@ -326,6 +328,7 @@ def main(args):
             print('Started training')
             rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0)
             lr = None
+            t = time.time()
             for i in range(1, args.max_nrof_steps+1):
                 if not lr or i % 100 == 0:
                     lr = utils.get_learning_rate_from_file(learning_rate_schedule, i)
@@ -338,8 +341,9 @@ def main(args):
                 reg_loss_tot += reg_loss_
                 loss_tot += loss_
                 if i % 10 == 0:
-                    print('step: %-5d  lr: %-12.6f  rec_loss: %-12.1f  reg_loss: %-12.1f  loss: %-12.1f' % (i, lr, rec_loss_tot/10, reg_loss_tot/10, loss_tot/10))
+                    print('step: %-5d  time: %-12.3f  lr: %-12.6f  rec_loss: %-12.1f  reg_loss: %-12.1f  loss: %-12.1f' % (i, time.time()-t, lr, rec_loss_tot/10, reg_loss_tot/10, loss_tot/10))
                     rec_loss_tot, reg_loss_tot, loss_tot = (0.0, 0.0, 0.0)
+                    t = time.time()
                 if i % 5000 == 0 and i>0:
                     saver.save(sess, model_filename, i)
                 if i % 100 == 0:
