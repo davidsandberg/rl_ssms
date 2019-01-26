@@ -255,9 +255,8 @@ class EnvModel():
         self.obs_hat = tf.nn.sigmoid(tf.stack(obs_hat_list, axis=1))
 
         # Calculate loss
-        f = nrof_free_nats * np.prod(self.mu.get_shape().as_list()[2:])
-        print('Reg loss limit: %.3f' % f)
-        self.regularization_loss = tf.maximum(tf.constant(f, tf.float32), kl_divergence_gaussians(self.mu, self.sigma, self.mu_hat, self.sigma_hat))
+        f = tf.constant(nrof_free_nats * np.prod(self.mu.get_shape().as_list()[2:]), tf.float32)
+        self.regularization_loss = tf.maximum(f, kl_divergence_gaussians(self.mu, self.sigma, self.mu_hat, self.sigma_hat))
         self.reconstruction_loss = kl_divergence_bernoulli(self.obs[:,nrof_init_time_steps:,:,:,:], self.obs_hat)
         
 def create_dataset(filelist, path, buffer_size=25, batch_size=10):
@@ -275,10 +274,12 @@ def create_dataset(filelist, path, buffer_size=25, batch_size=10):
     ds = ds.batch(batch_size)
     return ds
   
-def create_transition_type_matrix(batch_size, seq_length, training_scheme='75%PDT'):
+def create_transition_type_matrix(batch_size, seq_length, training_scheme='100%PDT'):
     is_pdt = np.ones((batch_size, seq_length), np.bool)
     if training_scheme=='75%PDT':
         is_pdt[:,0::4] = False
+    elif training_scheme=='100%PDT':
+        pass
     else:
         raise ValueError('Invalid training scheme "%s".' % training_scheme)
     return is_pdt
@@ -298,6 +299,7 @@ def main(args):
     # Store some git revision info in a text file in the log directory
     utils.store_revision_info(src_path, res_dir, ' '.join(sys.argv))
     
+    # Store parameters in an HDF5 file
     utils.store_hdf(os.path.join(res_dir, 'parameters.h5'), vars(args))
 
     # Copy learning rate schedule file to result directory
@@ -318,7 +320,7 @@ def main(args):
         obs, action = iterator.get_next()
         
         is_pdt_ph = tf.placeholder(tf.bool, [None, args.seq_length])
-        is_pdt = create_transition_type_matrix(args.batch_size, args.seq_length)
+        is_pdt = create_transition_type_matrix(args.batch_size, args.seq_length, args.training_scheme)
 
         with tf.variable_scope('env_model'):
             env_model = EnvModel(is_pdt_ph, obs, action, 1, model_type=args.model_type, 
@@ -396,6 +398,8 @@ def parse_arguments(argv):
         help='The length of each sequence (excluding warm-up).', default=10)
     parser.add_argument('--nrof_free_nats', type=float,
         help='The number of free nats per dimension.', default=0.05)
+    parser.add_argument('--training_scheme', type=str,
+        help='The type of transitions (Observation or Prediction Dependent Transitions) to use during training.', default='100%PDT')
 
     return parser.parse_args(argv)
   
