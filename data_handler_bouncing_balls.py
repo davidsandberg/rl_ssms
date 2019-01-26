@@ -38,7 +38,7 @@ def sigmoid(x):        return 1./(1.+scipy.exp(-x))
 SIZE=10
 # size of bounding box: SIZE X SIZE.
 
-def bounce_n(T=128, n=2, r=None, m=None):
+def bounce_n(T=128, n=2, r=None, m=None, diffusion_stdev=0.0):
     if r is None: r=scipy.array([1.2]*n)
     if m==None: m=scipy.array([1]*n)
     # r is to be rather small.
@@ -68,6 +68,9 @@ def bounce_n(T=128, n=2, r=None, m=None):
         for i in range(n):
             X[t,i]=x[i]
             
+        for i in range(n):
+            x[i]+=scipy.randn(2) * diffusion_stdev
+
         for _ in range(int(1/eps)):
 
             for i in range(n):
@@ -115,18 +118,19 @@ def matricize(X,res,r=None):
         A[t][A[t]>1]=1
     return A
 
-def bounce_vec(res, n=2, T=128, r =None, m =None):
+def bounce_vec(res, n=2, T=128, r=None, m=None, diffusion_stdev=0.0):
     if r==None: r=scipy.array([1.2]*n)
-    x = bounce_n(T,n,r,m);
+    x = bounce_n(T,n,r,m, diffusion_stdev=diffusion_stdev);
     V = matricize(x,res,r)
     return V.reshape(T, res**2)  
 
 if __name__ == "__main__":
+    diffusion_stdev=0.1
     res=80
     T=20
     N=100
     M=200
-    target_dir = os.path.join('data', 'bouncing_balls_diff0p0_bae_0p0')
+    target_dir = os.path.join('data', 'bouncing_balls_ds0p1')
     os.makedirs(target_dir, exist_ok=True)
     nrof_balls = 1
     for j in range(M):
@@ -134,7 +138,7 @@ if __name__ == "__main__":
         sys.stdout.flush()
         dat=scipy.empty((N), dtype=object)
         for i in range(N):
-            dat[i]=bounce_vec(res=res, n=nrof_balls, T=T)
+            dat[i]=bounce_vec(res=res, n=nrof_balls, T=T, diffusion_stdev=diffusion_stdev)
         data = np.reshape(scipy.stack(dat), (N, T, res, res))
         utils.save_pickle(os.path.join(target_dir, 'train_%03d.pkl' % j), data)
     print('\nDone')
@@ -144,7 +148,7 @@ if __name__ == "__main__":
     dat=scipy.empty((N), dtype=object)
     for j in range(M):
         for i in range(N):
-            dat[i]=bounce_vec(res=res, n=nrof_balls, T=T)
+            dat[i]=bounce_vec(res=res, n=nrof_balls, T=T, diffusion_stdev=diffusion_stdev)
         data = np.reshape(scipy.stack(dat), (N, T, res, res))
         utils.save_pickle(os.path.join(target_dir, 'test_%03d.pkl' % j), data)
 
