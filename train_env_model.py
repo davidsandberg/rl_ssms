@@ -163,9 +163,26 @@ def get_onehot_actions(actions, nrof_actions, state_shape):
     onehot_actions = tf.tile(oh, multiples=(1, 1, height, width, 1))
     return onehot_actions
   
+def select_transition_model_sample(model_type, z, mu):
+    if model_type=='sSSM':
+        return z
+    elif model_type=='dSSM-VAE' or model_type=='dSSM-DET':
+        return mu
+    else:
+        raise ValueError('Invalid model type "%s"' % model_type)
+  
+def select_observation_decoder_sample(model_type, z, mu):
+    if model_type=='sSSM' or model_type=='dSSM-VAE':
+        return z
+    elif model_type=='dSSM-DET':
+        return mu
+    else:
+        raise ValueError('Invalid model type "%s"' % model_type)
+  
 class EnvModel():
     
-    def __init__(self, is_pdt, obs, actions, nrof_actions=None, nrof_init_time_steps=3, nrof_time_steps=None, nrof_free_nats=0.0):
+    def __init__(self, is_pdt, obs, actions, nrof_actions=None, model_type='sSSM', 
+            nrof_init_time_steps=3, nrof_time_steps=None, nrof_free_nats=0.0):
         _, length, width, height, depth = obs.get_shape().as_list()
     
         self.obs = obs
@@ -217,11 +234,13 @@ class EnvModel():
             z_list += [ z ]
             
             # Calculate next state
-            next_state = state_transition_module(onehot_actions[:,t,:,:,:], state, z)
+            z_trans = select_transition_model_sample(model_type, z, mu_x)
+            next_state = state_transition_module(onehot_actions[:,t,:,:,:], state, z_trans)
             next_state_list += [ next_state ]
             
             # Calculate observation
-            obs_hat = observation_decoder(next_state, z)
+            z_obs = select_observation_decoder_sample(model_type, z, mu_x)
+            obs_hat = observation_decoder(next_state, z_obs)
             obs_hat_list += [ obs_hat ]
             
             state = next_state
@@ -302,7 +321,8 @@ def main(args):
         is_pdt = create_transition_type_matrix(args.batch_size, args.seq_length)
 
         with tf.variable_scope('env_model'):
-            env_model = EnvModel(is_pdt_ph, obs, action, 1, nrof_time_steps=args.seq_length, nrof_free_nats=args.nrof_free_nats)
+            env_model = EnvModel(is_pdt_ph, obs, action, 1, model_type=args.model_type, 
+                nrof_time_steps=args.seq_length, nrof_free_nats=args.nrof_free_nats)
 
         reg_loss = tf.reduce_mean(env_model.regularization_loss)
         rec_loss = tf.reduce_mean(env_model.reconstruction_loss)
@@ -362,6 +382,8 @@ def main(args):
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
     
+    parser.add_argument('--model_type', type=str,
+        help='The type of model to train (sSSM, dSSM-VAE or dSSM-DET).', default='sSSM')
     parser.add_argument('--max_nrof_steps', type=int,
         help='Number of steps to train for.', default=20000)
     parser.add_argument('--batch_size', type=int,
