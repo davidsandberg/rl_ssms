@@ -316,9 +316,8 @@ def main(args):
         tf.set_random_seed(args.seed)
         np.random.seed(args.seed)
       
-        data_dir = os.path.join('data', 'bouncing_balls_ds0p1')
         filelist = [ 'train_%03d.pkl' % i for i in range(200) ]
-        dataset = create_dataset(filelist, data_dir, buffer_size=20000, batch_size=args.batch_size, 
+        dataset = create_dataset(filelist, args.data_dir, buffer_size=20000, batch_size=args.batch_size, 
             total_seq_length=args.nrof_init_time_steps+args.seq_length)
 
         # Create an iterator over the dataset
@@ -390,6 +389,8 @@ def main(args):
 def parse_arguments(argv):
     parser = argparse.ArgumentParser()
     
+    parser.add_argument('--data_dir', type=str,
+        help='The directory containing the dataset to use for training.', default='data/bouncing_balls_ds0p1')
     parser.add_argument('--model_type', type=str,
         help='The type of model to train (sSSM, dSSM-VAE or dSSM-DET).', default='sSSM')
     parser.add_argument('--max_nrof_steps', type=int,
