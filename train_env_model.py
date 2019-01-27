@@ -256,7 +256,7 @@ class EnvModel():
 
         # Calculate loss
         self.reconstruction_loss = kl_divergence_bernoulli(self.obs[:,nrof_init_time_steps:,:,:,:], self.obs_hat)
-        if model_type=='dSSM-DET' or model_type=='RAR':
+        if model_type=='dSSM-DET':
             # For deterministic models we only minimize the reconstruction loss
             #  Hence regularization loss is set to zero
             self.regularization_loss = tf.zeros_like(self.reconstruction_loss)
