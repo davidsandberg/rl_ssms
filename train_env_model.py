@@ -255,20 +255,25 @@ class EnvModel():
         self.obs_hat = tf.nn.sigmoid(tf.stack(obs_hat_list, axis=1))
 
         # Calculate loss
-        f = tf.constant(nrof_free_nats * np.prod(self.mu.get_shape().as_list()[2:]), tf.float32)
-        self.regularization_loss = tf.maximum(f, kl_divergence_gaussians(self.mu, self.sigma, self.mu_hat, self.sigma_hat))
         self.reconstruction_loss = kl_divergence_bernoulli(self.obs[:,nrof_init_time_steps:,:,:,:], self.obs_hat)
+        if model_type=='dSSM-DET' or model_type=='RAR':
+            # For deterministic models we only minimize the reconstruction loss
+            #  Hence regularization loss is set to zero
+            self.regularization_loss = tf.zeros_like(self.reconstruction_loss)
+        else:
+            f = tf.constant(nrof_free_nats * np.prod(self.mu.get_shape().as_list()[2:]), tf.float32)
+            self.regularization_loss = tf.maximum(f, kl_divergence_gaussians(self.mu, self.sigma, self.mu_hat, self.sigma_hat))
         
-def create_dataset(filelist, path, buffer_size=25, batch_size=10):
+def create_dataset(filelist, path, buffer_size=1024, batch_size=16, total_seq_length=13):
     def gen(filelist, path):
         for fn in filelist:
             data = np.float32(utils.load_pickle(os.path.join(path, fn)))
             data = np.expand_dims(data, 4)
             data = np.repeat(data, 3, axis=4)
             for i in range(data.shape[0]):
-                yield data[i,:13,:,:,:], np.zeros((13,), dtype=np.int32)
+                yield data[i,:total_seq_length,:,:,:], np.zeros((total_seq_length,), dtype=np.int32)
           
-    ds = Dataset.from_generator(lambda: gen(filelist, path), (tf.float32, tf.int32), (tf.TensorShape([13, 80, 80, 3]), tf.TensorShape([13,])))
+    ds = Dataset.from_generator(lambda: gen(filelist, path), (tf.float32, tf.int32), (tf.TensorShape([total_seq_length, 80, 80, 3]), tf.TensorShape([total_seq_length,])))
     ds = ds.repeat(count=None)
     ds = ds.prefetch(buffer_size)
     ds = ds.batch(batch_size)
@@ -313,7 +318,8 @@ def main(args):
       
         data_dir = os.path.join('data', 'bouncing_balls_ds0p1')
         filelist = [ 'train_%03d.pkl' % i for i in range(200) ]
-        dataset = create_dataset(filelist, data_dir, buffer_size=20000, batch_size=args.batch_size)
+        dataset = create_dataset(filelist, data_dir, buffer_size=20000, batch_size=args.batch_size, 
+            total_seq_length=args.nrof_init_time_steps+args.seq_length)
 
         # Create an iterator over the dataset
         iterator = dataset.make_one_shot_iterator()
@@ -396,6 +402,8 @@ def parse_arguments(argv):
         help='File containing the learning rate schedule.', default='learning_rate_schedule_bouncing_balls.txt')
     parser.add_argument('--seq_length', type=int,
         help='The length of each sequence (excluding warm-up).', default=10)
+    parser.add_argument('--nrof_init_time_steps', type=int,
+        help='The number of initial time steps.', default=3)
     parser.add_argument('--nrof_free_nats', type=float,
         help='The number of free nats per dimension.', default=0.05)
     parser.add_argument('--training_scheme', type=str,
